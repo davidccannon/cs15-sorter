@@ -1,0 +1,154 @@
+<div>
+  <h2 class="sr-only">Tool to upload a Leica CS15 CSV export and download it re-sorted alphanumerically by point ID</h2>
+
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:1rem;">
+    <i class="ti ti-arrows-sort" style="font-size:20px; color:var(--text-accent);" aria-hidden="true"></i>
+    <p style="font-weight:500; font-size:16px; margin:0;">CS15 export sorter</p>
+  </div>
+
+  <p style="font-size:13px; color:var(--text-secondary); margin:0 0 1rem;">Upload a CSV exported from your CS15 (Leica System 1200 format). It will be re-sorted by point ID: letters first, then numbers in numeric order.</p>
+
+  <div id="dropzone" style="border:0.5px dashed var(--border-strong); border-radius:var(--radius); padding:2rem 1rem; text-align:center; cursor:pointer;">
+    <i class="ti ti-upload" style="font-size:24px; color:var(--text-muted);" aria-hidden="true"></i>
+    <p style="font-size:14px; color:var(--text-secondary); margin:8px 0 0;">Click to choose a .CSV file, or drop it here</p>
+    <input type="file" id="fileInput" accept=".csv,.CSV" style="display:none;" />
+  </div>
+
+  <div id="status" style="font-size:13px; color:var(--text-secondary); margin-top:12px;"></div>
+
+  <div id="resultArea" style="display:none; margin-top:1rem;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+      <p style="font-size:14px; font-weight:500; margin:0;">Sorted order preview</p>
+      <button id="downloadBtn"><i class="ti ti-download" style="font-size:16px; vertical-align:-2px; margin-right:6px;" aria-hidden="true"></i>Download sorted CSV</button>
+    </div>
+    <div style="max-height:280px; overflow-y:auto; border:0.5px solid var(--border); border-radius:var(--radius); background:var(--surface-1);">
+      <table style="width:100%; font-size:12px; border-collapse:collapse;" id="previewTable"></table>
+    </div>
+  </div>
+</div>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const statusEl = document.getElementById('status');
+const resultArea = document.getElementById('resultArea');
+const previewTable = document.getElementById('previewTable');
+const downloadBtn = document.getElementById('downloadBtn');
+
+let sortedCsvText = '';
+let outFileName = 'sorted_export.CSV';
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.style.borderColor = 'var(--border-accent)'; });
+dropzone.addEventListener('dragleave', () => { dropzone.style.borderColor = 'var(--border-strong)'; });
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.style.borderColor = 'var(--border-strong)';
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function naturalKey(pointId) {
+  const m = pointId.match(/^(.*?)(\d*)$/);
+  const prefix = (m[1] || '').toUpperCase();
+  const num = m[2] ? parseInt(m[2], 10) : -1;
+  return [prefix, num];
+}
+
+function handleFile(file) {
+  outFileName = file.name.replace(/\.csv$/i, '_SORTED.CSV');
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      processCsv(e.target.result);
+    } catch (err) {
+      statusEl.textContent = 'Could not parse this file: ' + err.message;
+      statusEl.style.color = 'var(--text-danger)';
+    }
+  };
+  reader.readAsText(file);
+}
+
+function processCsv(text) {
+  const lines = text.split(/\r\n|\n|\r/);
+  let idx = 0;
+  const headerLines = [];
+  while (idx < lines.length && idx < 2) {
+    headerLines.push(lines[idx]);
+    idx++;
+  }
+  const dataLines = [];
+  const footerLines = [];
+  for (; idx < lines.length; idx++) {
+    const line = lines[idx];
+    const stripped = line.trim();
+    if (!stripped) continue;
+    const firstField = stripped.split(',')[0].trim();
+    if (/^[A-Za-z0-9\-_]+$/.test(firstField) && !/^property/i.test(firstField) && !/^created/i.test(firstField)) {
+      dataLines.push(line);
+    } else {
+      footerLines.push(line);
+    }
+  }
+
+  if (dataLines.length === 0) {
+    statusEl.textContent = 'No point rows detected in this file.';
+    statusEl.style.color = 'var(--text-danger)';
+    return;
+  }
+
+  dataLines.sort((a, b) => {
+    const idA = a.split(',')[0].trim();
+    const idB = b.split(',')[0].trim();
+    const [pA, nA] = naturalKey(idA);
+    const [pB, nB] = naturalKey(idB);
+    if (pA < pB) return -1;
+    if (pA > pB) return 1;
+    return nA - nB;
+  });
+
+  sortedCsvText = [...headerLines, ...dataLines, ...footerLines].join('\r\n');
+
+  statusEl.textContent = dataLines.length + ' points sorted.';
+  statusEl.style.color = 'var(--text-success)';
+
+  previewTable.innerHTML = '';
+  const headerRow = document.createElement('tr');
+  ['#', 'Point ID'].forEach((h) => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.cssText = 'text-align:left; padding:6px 10px; border-bottom:0.5px solid var(--border); color:var(--text-secondary); font-weight:500; position:sticky; top:0; background:var(--surface-1);';
+    headerRow.appendChild(th);
+  });
+  previewTable.appendChild(headerRow);
+  dataLines.forEach((line, i) => {
+    const tr = document.createElement('tr');
+    const tdNum = document.createElement('td');
+    tdNum.textContent = i + 1;
+    tdNum.style.cssText = 'padding:4px 10px; color:var(--text-muted); border-bottom:0.5px solid var(--border);';
+    const tdId = document.createElement('td');
+    tdId.textContent = line.split(',')[0].trim();
+    tdId.style.cssText = 'padding:4px 10px; border-bottom:0.5px solid var(--border);';
+    tr.appendChild(tdNum);
+    tr.appendChild(tdId);
+    previewTable.appendChild(tr);
+  });
+
+  resultArea.style.display = 'block';
+}
+
+downloadBtn.addEventListener('click', () => {
+  if (!sortedCsvText) return;
+  const blob = new Blob([sortedCsvText], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = outFileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+</script>
