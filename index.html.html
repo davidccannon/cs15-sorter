@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CS15 export sorter</title>
+<style>
+  :root {
+    --bg: #F7F6F2;
+    --surface: #FFFFFF;
+    --border: #D9D7CE;
+    --border-strong: #B4B2A9;
+    --text-primary: #1E1E1C;
+    --text-secondary: #5F5E5A;
+    --text-muted: #888780;
+    --accent: #185FA5;
+    --accent-bg: #E6F1FB;
+    --success: #3B6D11;
+    --danger: #A32D2D;
+    --radius: 8px;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.5rem;
+    background: var(--bg);
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    display: flex;
+    justify-content: center;
+  }
+  .card {
+    width: 100%;
+    max-width: 640px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  p.lead {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin: 0 0 1.5rem;
+    line-height: 1.5;
+  }
+  #dropzone {
+    border: 2px dashed var(--border-strong);
+    border-radius: var(--radius);
+    padding: 2.5rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #dropzone:hover, #dropzone.dragover {
+    border-color: var(--accent);
+    background: var(--accent-bg);
+  }
+  #dropzone p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin: 10px 0 0;
+  }
+  #status {
+    font-size: 13px;
+    margin-top: 12px;
+    min-height: 18px;
+  }
+  #resultArea { display: none; margin-top: 1.5rem; }
+  .result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .result-header p { font-size: 14px; font-weight: 600; margin: 0; }
+  button {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-bg); border-color: var(--accent); }
+  table { width: 100%; font-size: 12px; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    background: #F1EFE8;
+  }
+  td.muted { color: var(--text-muted); }
+  .table-wrap {
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  footer {
+    margin-top: 2rem;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>CS15 export sorter</h1>
+    <p class="lead">Upload a CSV exported from your CS15 (Leica System 1200 format). It will be re-sorted by point ID: letters first, then numbers in numeric order &mdash; so StkdP&#8209;B92 comes before StkdP&#8209;B131, not after it.</p>
+
+    <div id="dropzone">
+      <p>Click to choose a .CSV file, or drop it here</p>
+      <input type="file" id="fileInput" accept=".csv,.CSV" style="display:none;" />
+    </div>
+
+    <div id="status"></div>
+
+    <div id="resultArea">
+      <div class="result-header">
+        <p>Sorted order preview</p>
+        <button id="downloadBtn">Download sorted CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table id="previewTable"></table>
+      </div>
+    </div>
+
+    <footer>Runs entirely in your browser. Nothing is uploaded anywhere.</footer>
+  </div>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const statusEl = document.getElementById('status');
+const resultArea = document.getElementById('resultArea');
+const previewTable = document.getElementById('previewTable');
+const downloadBtn = document.getElementById('downloadBtn');
+
+let sortedCsvText = '';
+let outFileName = 'sorted_export.CSV';
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function naturalKey(pointId) {
+  const m = pointId.match(/^(.*?)(\d*)$/);
+  const prefix = (m[1] || '').toUpperCase();
+  const num = m[2] ? parseInt(m[2], 10) : -1;
+  return [prefix, num];
+}
+
+function handleFile(file) {
+  outFileName = file.name.replace(/\.csv$/i, '_SORTED.CSV');
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      processCsv(e.target.result);
+    } catch (err) {
+      statusEl.textContent = 'Could not parse this file: ' + err.message;
+      statusEl.style.color = 'var(--danger)';
+    }
+  };
+  reader.readAsText(file);
+}
+
+function processCsv(text) {
+  const lines = text.split(/\r\n|\n|\r/);
+  let idx = 0;
+  const headerLines = [];
+  while (idx < lines.length && idx < 2) {
+    headerLines.push(lines[idx]);
+    idx++;
+  }
+  const dataLines = [];
+  const footerLines = [];
+  for (; idx < lines.length; idx++) {
+    const line = lines[idx];
+    const stripped = line.trim();
+    if (!stripped) continue;
+    const firstField = stripped.split(',')[0].trim();
+    if (/^[A-Za-z0-9\-_]+$/.test(firstField) && !/^property/i.test(firstField) && !/^created/i.test(firstField)) {
+      dataLines.push(line);
+    } else {
+      footerLines.push(line);
+    }
+  }
+
+  if (dataLines.length === 0) {
+    statusEl.textContent = 'No point rows detected in this file.';
+    statusEl.style.color = 'var(--danger)';
+    resultArea.style.display = 'none';
+    return;
+  }
+
+  dataLines.sort((a, b) => {
+    const idA = a.split(',')[0].trim();
+    const idB = b.split(',')[0].trim();
+    const [pA, nA] = naturalKey(idA);
+    const [pB, nB] = naturalKey(idB);
+    if (pA < pB) return -1;
+    if (pA > pB) return 1;
+    return nA - nB;
+  });
+
+  sortedCsvText = [...headerLines, ...dataLines, ...footerLines].join('\r\n');
+
+  statusEl.textContent = dataLines.length + ' points sorted.';
+  statusEl.style.color = 'var(--success)';
+
+  previewTable.innerHTML = '';
+  const headerRow = document.createElement('tr');
+  ['#', 'Point ID'].forEach((h) => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    headerRow.appendChild(th);
+  });
+  previewTable.appendChild(headerRow);
+  dataLines.forEach((line, i) => {
+    const tr = document.createElement('tr');
+    const tdNum = document.createElement('td');
+    tdNum.textContent = i + 1;
+    tdNum.className = 'muted';
+    const tdId = document.createElement('td');
+    tdId.textContent = line.split(',')[0].trim();
+    tr.appendChild(tdNum);
+    tr.appendChild(tdId);
+    previewTable.appendChild(tr);
+  });
+
+  resultArea.style.display = 'block';
+}
+
+downloadBtn.addEventListener('click', () => {
+  if (!sortedCsvText) return;
+  const blob = new Blob([sortedCsvText], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = outFileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
